@@ -14,6 +14,7 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  STORE_DIR,
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
@@ -42,7 +43,6 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
-
 }
 
 export interface ContainerOutput {
@@ -113,6 +113,29 @@ function buildVolumeMounts(
         readonly: true,
       });
     }
+
+    // Messages database (read-only) — lets agent look up conversation history
+    const dbPath = path.join(STORE_DIR, 'messages.db');
+    if (fs.existsSync(dbPath)) {
+      mounts.push({
+        hostPath: path.join(STORE_DIR),
+        containerPath: '/workspace/store',
+        readonly: true,
+      });
+    }
+  }
+
+  // Shared memory directory (read-write for most groups)
+  // Single set of memories across all channels — one personality, one brain
+  // Groups with isolateMemory skip this mount for fully separate personas
+  if (!group.isolateMemory) {
+    const sharedDir = path.join(GROUPS_DIR, 'shared');
+    fs.mkdirSync(sharedDir, { recursive: true });
+    mounts.push({
+      hostPath: sharedDir,
+      containerPath: '/workspace/shared',
+      readonly: false,
+    });
   }
 
   // Per-group Claude sessions directory (isolated from other groups)

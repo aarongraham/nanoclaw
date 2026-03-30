@@ -40,6 +40,7 @@ export interface RegisteredGroup {
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  isolateMemory?: boolean; // True to skip mounting shared memory (fully isolated persona)
 }
 
 export interface NewMessage {

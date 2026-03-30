@@ -59,6 +59,12 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
+  /** Pre-set folder mapping for a group (enables shared-folder conflict detection) */
+  setGroupFolder(groupJid: string, folder: string): void {
+    const state = this.getGroup(groupJid);
+    state.groupFolder = folder;
+  }
+
   enqueueMessageCheck(groupJid: string): void {
     if (this.shuttingDown) return;
 
@@ -68,6 +74,23 @@ export class GroupQueue {
       state.pendingMessages = true;
       logger.debug({ groupJid }, 'Container active, message queued');
       return;
+    }
+
+    // Check if another group sharing the same folder is already active
+    // (e.g. a 1:1 DM and a group chat sharing the same persona)
+    if (state.groupFolder) {
+      const siblingActive = this.isFolderActive(groupJid, state.groupFolder);
+      if (siblingActive) {
+        state.pendingMessages = true;
+        if (!this.waitingGroups.includes(groupJid)) {
+          this.waitingGroups.push(groupJid);
+        }
+        logger.debug(
+          { groupJid, folder: state.groupFolder },
+          'Sibling group with same folder active, message queued',
+        );
+        return;
+      }
     }
 
     if (this.activeCount >= MAX_CONCURRENT_CONTAINERS) {
@@ -85,6 +108,16 @@ export class GroupQueue {
     this.runForGroup(groupJid, 'messages').catch((err) =>
       logger.error({ groupJid, err }, 'Unhandled error in runForGroup'),
     );
+  }
+
+  /** Check if any other group with the same folder is currently active */
+  private isFolderActive(excludeJid: string, folder: string): boolean {
+    for (const [jid, s] of this.groups) {
+      if (jid !== excludeJid && s.active && s.groupFolder === folder) {
+        return true;
+      }
+    }
+    return false;
   }
 
   enqueueTask(groupJid: string, taskId: string, fn: () => Promise<void>): void {
