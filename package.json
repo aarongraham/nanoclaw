@@ -27,7 +27,6 @@
     "cron-parser": "5.5.0",
     "grammy": "^1.39.3",
     "qrcode": "^1.5.4",
-    "openai": "^6.27.0",
     "qrcode-terminal": "^0.12.0",
     "sharp": "^0.34.5"
   },
