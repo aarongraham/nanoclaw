@@ -157,6 +157,15 @@ function createSchema(database: Database.Database): void {
     /* columns already exist */
   }
 
+  // Add is_main column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add isolate_memory column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -398,9 +407,30 @@ export function getMessagesSince(
   chatJid: string,
   sinceTimestamp: string,
   botPrefix: string,
+  limit?: number,
 ): NewMessage[] {
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
+  if (limit !== undefined && limit > 0) {
+    // When a limit is specified, return the most recent N messages after the cursor.
+    // Use a subquery to get the last N, then return them in ascending order.
+    const sql = `
+      SELECT id, chat_jid, sender, sender_name, content, timestamp
+      FROM (
+        SELECT id, chat_jid, sender, sender_name, content, timestamp
+        FROM messages
+        WHERE chat_jid = ? AND timestamp > ?
+          AND is_bot_message = 0 AND content NOT LIKE ?
+          AND content != '' AND content IS NOT NULL
+        ORDER BY timestamp DESC
+        LIMIT ?
+      )
+      ORDER BY timestamp
+    `;
+    return db
+      .prepare(sql)
+      .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+  }
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
@@ -416,14 +446,20 @@ export function getMessagesSince(
 
 export function getMessageFromMe(messageId: string, chatJid: string): boolean {
   const row = db
-    .prepare(`SELECT is_from_me FROM messages WHERE id = ? AND chat_jid = ? LIMIT 1`)
+    .prepare(
+      `SELECT is_from_me FROM messages WHERE id = ? AND chat_jid = ? LIMIT 1`,
+    )
     .get(messageId, chatJid) as { is_from_me: number | null } | undefined;
   return row?.is_from_me === 1;
 }
 
-export function getLatestMessage(chatJid: string): { id: string; fromMe: boolean } | undefined {
+export function getLatestMessage(
+  chatJid: string,
+): { id: string; fromMe: boolean } | undefined {
   const row = db
-    .prepare(`SELECT id, is_from_me FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`)
+    .prepare(
+      `SELECT id, is_from_me FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`,
+    )
     .get(chatJid) as { id: string; is_from_me: number | null } | undefined;
   if (!row) return undefined;
   return { id: row.id, fromMe: row.is_from_me === 1 };
@@ -432,30 +468,30 @@ export function getLatestMessage(chatJid: string): { id: string; fromMe: boolean
 export function storeReaction(reaction: Reaction): void {
   if (!reaction.emoji) {
     db.prepare(
-      `DELETE FROM reactions WHERE message_id = ? AND message_chat_jid = ? AND reactor_jid = ?`
+      `DELETE FROM reactions WHERE message_id = ? AND message_chat_jid = ? AND reactor_jid = ?`,
     ).run(reaction.message_id, reaction.message_chat_jid, reaction.reactor_jid);
     return;
   }
   db.prepare(
     `INSERT OR REPLACE INTO reactions (message_id, message_chat_jid, reactor_jid, reactor_name, emoji, timestamp)
-     VALUES (?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     reaction.message_id,
     reaction.message_chat_jid,
     reaction.reactor_jid,
     reaction.reactor_name || null,
     reaction.emoji,
-    reaction.timestamp
+    reaction.timestamp,
   );
 }
 
 export function getReactionsForMessage(
   messageId: string,
-  chatJid: string
+  chatJid: string,
 ): Reaction[] {
   return db
     .prepare(
-      `SELECT * FROM reactions WHERE message_id = ? AND message_chat_jid = ? ORDER BY timestamp`
+      `SELECT * FROM reactions WHERE message_id = ? AND message_chat_jid = ? ORDER BY timestamp`,
     )
     .all(messageId, chatJid) as Reaction[];
 }
@@ -463,8 +499,10 @@ export function getReactionsForMessage(
 export function getMessagesByReaction(
   reactorJid: string,
   emoji: string,
-  chatJid?: string
-): Array<Reaction & { content: string; sender_name: string; message_timestamp: string }> {
+  chatJid?: string,
+): Array<
+  Reaction & { content: string; sender_name: string; message_timestamp: string }
+> {
   const sql = chatJid
     ? `
       SELECT r.*, m.content, m.sender_name, m.timestamp as message_timestamp
@@ -481,7 +519,11 @@ export function getMessagesByReaction(
       ORDER BY r.timestamp DESC
     `;
 
-  type Result = Reaction & { content: string; sender_name: string; message_timestamp: string };
+  type Result = Reaction & {
+    content: string;
+    sender_name: string;
+    message_timestamp: string;
+  };
   return chatJid
     ? (db.prepare(sql).all(reactorJid, emoji, chatJid) as Result[])
     : (db.prepare(sql).all(reactorJid, emoji) as Result[]);
@@ -489,11 +531,11 @@ export function getMessagesByReaction(
 
 export function getReactionsByUser(
   reactorJid: string,
-  limit: number = 50
+  limit: number = 50,
 ): Reaction[] {
   return db
     .prepare(
-      `SELECT * FROM reactions WHERE reactor_jid = ? ORDER BY timestamp DESC LIMIT ?`
+      `SELECT * FROM reactions WHERE reactor_jid = ? ORDER BY timestamp DESC LIMIT ?`,
     )
     .all(reactorJid, limit) as Reaction[];
 }
