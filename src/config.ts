@@ -56,6 +56,14 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
   process.env.CREDENTIAL_PROXY_PORT || '3001',
   10,
 );
+export const DASHBOARD_PORT = parseInt(
+  process.env.DASHBOARD_PORT || '3777',
+  10,
+);
+export const DASHBOARD_ENABLED =
+  (process.env.DASHBOARD_ENABLED || 'false') === 'true';
+export const DASHBOARD_WRITE =
+  (process.env.DASHBOARD_WRITE || 'false') === 'true';
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,

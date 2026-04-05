@@ -4,6 +4,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  DASHBOARD_ENABLED,
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
@@ -13,6 +14,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { startDashboard, stopDashboard } from './dashboard/server.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -646,9 +648,14 @@ async function main(): Promise<void> {
     PROXY_BIND_HOST,
   );
 
+  if (DASHBOARD_ENABLED) {
+    startDashboard();
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    if (DASHBOARD_ENABLED) stopDashboard();
     proxyServer.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
