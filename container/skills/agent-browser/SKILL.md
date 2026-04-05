@@ -16,6 +16,16 @@ agent-browser fill @e2 "text"   # Fill input by ref
 agent-browser close             # Close browser
 ```
 
+## Simple fetches (opening hours, page text)
+
+For read-only tasks like checking opening hours or reading a page, try `curl` first — it's faster and less likely to be blocked than a full browser:
+
+```bash
+curl -sL -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" "https://example.com"
+```
+
+Fall back to `agent-browser open` only if the site requires JavaScript rendering or curl returns no useful content.
+
 ## Core workflow
 
 1. Navigate: `agent-browser open <url>`
