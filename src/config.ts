@@ -11,6 +11,9 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'TZ',
+  'DASHBOARD_ENABLED',
+  'DASHBOARD_WRITE',
+  'DASHBOARD_PORT',
 ]);
 
 export const ASSISTANT_NAME =
@@ -57,13 +60,15 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
   10,
 );
 export const DASHBOARD_PORT = parseInt(
-  process.env.DASHBOARD_PORT || '3777',
+  process.env.DASHBOARD_PORT || envConfig.DASHBOARD_PORT || '3777',
   10,
 );
 export const DASHBOARD_ENABLED =
-  (process.env.DASHBOARD_ENABLED || 'false') === 'true';
+  (process.env.DASHBOARD_ENABLED || envConfig.DASHBOARD_ENABLED || 'false') ===
+  'true';
 export const DASHBOARD_WRITE =
-  (process.env.DASHBOARD_WRITE || 'false') === 'true';
+  (process.env.DASHBOARD_WRITE || envConfig.DASHBOARD_WRITE || 'false') ===
+  'true';
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
