@@ -38,6 +38,7 @@ import {
   OnChatMetadata,
   RegisteredGroup,
 } from '../types.js';
+import { registerChannel } from './registry.js';
 
 // Baileys expects a pino-compatible ILogger with level, child, and trace.
 // The built-in logger doesn't have these, so we create a thin shim.
@@ -631,3 +632,5 @@ export class WhatsAppChannel implements Channel {
     }
   }
 }
+
+registerChannel('whatsapp', (opts) => new WhatsAppChannel(opts));
