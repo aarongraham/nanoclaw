@@ -32,13 +32,13 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
-  imageAttachments?: Array<{ relativePath: string; mediaType: string }>;
+  imageAttachments?: Array<{ relativePath: string; mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' }>;
   script?: string;
 }
 
 interface ImageContentBlock {
   type: 'image';
-  source: { type: 'base64'; media_type: string; data: string };
+  source: { type: 'base64'; media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; data: string };
 }
 interface TextContentBlock {
   type: 'text';
