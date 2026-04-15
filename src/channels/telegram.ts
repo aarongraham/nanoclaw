@@ -214,6 +214,11 @@ export class TelegramChannel implements Channel {
         return;
       }
 
+      // Acknowledge receipt with 👀 reaction
+      ctx.react('👀').catch((err) =>
+        logger.debug({ err }, 'Failed to set reaction'),
+      );
+
       // Deliver message — startMessageLoop() will pick it up
       this.opts.onMessage(chatJid, {
         id: msgId,

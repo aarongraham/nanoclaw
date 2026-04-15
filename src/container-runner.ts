@@ -192,6 +192,22 @@ function buildVolumeMounts(
       fs.cpSync(srcDir, dstDir, { recursive: true });
     }
   }
+
+  // Sync skills from additional mount sources (e.g. /opt/argos/.claude/skills/)
+  // so the agent can invoke them as native skills without a manual copy
+  if (group.containerConfig?.additionalMounts) {
+    for (const mount of group.containerConfig.additionalMounts) {
+      const mountSkillsDir = path.join(mount.hostPath, '.claude', 'skills');
+      if (fs.existsSync(mountSkillsDir)) {
+        for (const skillDir of fs.readdirSync(mountSkillsDir)) {
+          const srcDir = path.join(mountSkillsDir, skillDir);
+          if (!fs.statSync(srcDir).isDirectory()) continue;
+          const dstDir = path.join(skillsDst, skillDir);
+          fs.cpSync(srcDir, dstDir, { recursive: true });
+        }
+      }
+    }
+  }
   mounts.push({
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
@@ -259,6 +275,8 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  image?: string,
+  extraEnv?: Record<string, string>,
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
@@ -282,6 +300,13 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
+  // Extra env vars from group containerConfig (e.g. DB credentials for dev-agent)
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      args.push('-e', `${key}=${value}`);
+    }
+  }
+
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
@@ -303,7 +328,7 @@ function buildContainerArgs(
     }
   }
 
-  args.push(CONTAINER_IMAGE);
+  args.push(image || CONTAINER_IMAGE);
 
   return args;
 }
@@ -322,7 +347,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, group.containerConfig?.image, group.containerConfig?.extraEnv);
 
   logger.debug(
     {
