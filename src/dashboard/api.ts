@@ -11,6 +11,10 @@ import {
   GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
+import {
+  getAllChannelHealth,
+  getChannelHealth,
+} from '../channel-health.js';
 import { CONTAINER_RUNTIME_BIN } from '../container-runtime.js';
 import {
   getAllRegisteredGroups,
@@ -557,6 +561,27 @@ export async function handleApiRequest(
       writeEnabled: DASHBOARD_WRITE,
       port: DASHBOARD_PORT,
     });
+  }
+  if (method === 'GET' && seg[1] === 'health' && !seg[2]) {
+    const channels = getAllChannelHealth();
+    const anyDegraded = channels.some((c) => c.state === 'degraded');
+    return jsonResp(
+      res,
+      { state: anyDegraded ? 'degraded' : 'healthy', channels },
+      anyDegraded ? 503 : 200,
+    );
+  }
+  if (method === 'GET' && seg[1] === 'health' && seg[2]) {
+    const channel = decodeURIComponent(seg[2]);
+    const health = getChannelHealth(channel);
+    if (!health) {
+      return jsonResp(
+        res,
+        { channel, state: 'unknown', reason: 'Channel not registered' },
+        404,
+      );
+    }
+    return jsonResp(res, health, health.state === 'healthy' ? 200 : 503);
   }
   if (method === 'GET' && seg[1] === 'containers' && !seg[2]) {
     return jsonResp(res, getContainers());

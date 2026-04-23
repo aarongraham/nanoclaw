@@ -1,4 +1,3 @@
-import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -21,6 +20,7 @@ import {
   GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
+import { setChannelHealth } from '../channel-health.js';
 import {
   getLastGroupSync,
   getLatestMessage,
@@ -125,13 +125,16 @@ export class WhatsAppChannel implements Channel {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        const msg =
-          'WhatsApp authentication required. Run /setup in Claude Code.';
-        logger.error(msg);
-        exec(
-          `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
+        logger.error(
+          'WhatsApp authentication required. Run /setup in Claude Code.',
         );
-        setTimeout(() => process.exit(1), 1000);
+        setChannelHealth(
+          'whatsapp',
+          'degraded',
+          'QR scan required — run /setup to re-authenticate',
+        );
+        this.sock?.end(undefined);
+        return;
       }
 
       if (connection === 'close') {
@@ -150,13 +153,23 @@ export class WhatsAppChannel implements Channel {
         );
 
         if (shouldReconnect) {
+          setChannelHealth(
+            'whatsapp',
+            'degraded',
+            `Connection closed (${reason ?? 'unknown'}) — reconnecting`,
+          );
           this.scheduleReconnect(1);
         } else {
           logger.info('Logged out. Run /setup to re-authenticate.');
-          process.exit(0);
+          setChannelHealth(
+            'whatsapp',
+            'degraded',
+            'Logged out — run /setup to re-authenticate',
+          );
         }
       } else if (connection === 'open') {
         this.connected = true;
+        setChannelHealth('whatsapp', 'healthy');
         logger.info('Connected to WhatsApp');
 
         // Announce availability so WhatsApp relays subsequent presence updates (typing indicators)

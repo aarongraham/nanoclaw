@@ -75,6 +75,10 @@ export const MAX_MESSAGES_PER_PROMPT = Math.max(
 );
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(process.env.IDLE_TIMEOUT || '1800000', 10); // 30min default — how long to keep container alive after last result
+export const CHANNEL_ALERT_DEBOUNCE_MS = parseInt(
+  process.env.CHANNEL_ALERT_DEBOUNCE_MS || '900000',
+  10,
+); // 15min — channel must stay degraded this long before we send an alert
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,

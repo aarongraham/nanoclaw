@@ -3,6 +3,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  CHANNEL_ALERT_DEBOUNCE_MS,
   CREDENTIAL_PROXY_PORT,
   DASHBOARD_ENABLED,
   DEFAULT_TRIGGER,
@@ -13,6 +14,10 @@ import {
   POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
+import {
+  getChannelHealth,
+  onChannelHealthChange,
+} from './channel-health.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { startDashboard, stopDashboard } from './dashboard/server.js';
 import './channels/index.js';
@@ -786,6 +791,61 @@ async function main(): Promise<void> {
       return group?.isMain === true;
     },
     isContainerAlive: (chatJid) => queue.isActive(chatJid),
+  });
+
+  // Debounced health alerts: only notify when a channel has been degraded
+  // continuously for CHANNEL_ALERT_DEBOUNCE_MS. Transient reconnects don't fire.
+  // Recovery alert only sent if we previously sent a degraded alert.
+  const pendingDegradedAlerts = new Map<string, NodeJS.Timeout>();
+  const alertedAsDegraded = new Set<string>();
+
+  const sendAlert = (channelName: string, text: string): void => {
+    for (const [jid, group] of Object.entries(registeredGroups)) {
+      if (!group.isMain) continue;
+      const target = channels.find(
+        (c) => c.name !== channelName && c.ownsJid(jid) && c.isConnected(),
+      );
+      if (!target) continue;
+      target.sendMessage(jid, text).catch((err) => {
+        logger.error(
+          { err, channel: channelName, via: target.name },
+          'Failed to send health alert',
+        );
+      });
+    }
+  };
+
+  onChannelHealthChange((current) => {
+    if (current.state === 'degraded') {
+      if (alertedAsDegraded.has(current.channel)) return;
+      if (pendingDegradedAlerts.has(current.channel)) return;
+      const timer = setTimeout(() => {
+        pendingDegradedAlerts.delete(current.channel);
+        const fresh = getChannelHealth(current.channel);
+        if (fresh?.state !== 'degraded') return;
+        alertedAsDegraded.add(current.channel);
+        const mins = Math.round(CHANNEL_ALERT_DEBOUNCE_MS / 60000);
+        sendAlert(
+          current.channel,
+          `NanoClaw: ${current.channel} channel has been degraded for ${mins}+ minutes. ${fresh.reason ?? ''}`.trim(),
+        );
+      }, CHANNEL_ALERT_DEBOUNCE_MS);
+      pendingDegradedAlerts.set(current.channel, timer);
+      return;
+    }
+    if (current.state === 'healthy') {
+      const pending = pendingDegradedAlerts.get(current.channel);
+      if (pending) {
+        clearTimeout(pending);
+        pendingDegradedAlerts.delete(current.channel);
+      }
+      if (alertedAsDegraded.delete(current.channel)) {
+        sendAlert(
+          current.channel,
+          `NanoClaw: ${current.channel} channel recovered.`,
+        );
+      }
+    }
   });
 
   // Create and connect all registered channels.

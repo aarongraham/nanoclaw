@@ -5,6 +5,7 @@ import path from 'path';
 import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { setChannelHealth } from '../channel-health.js';
 import { readEnvFile } from '../env.js';
 import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
@@ -215,9 +216,9 @@ export class TelegramChannel implements Channel {
       }
 
       // Acknowledge receipt with 👀 reaction
-      ctx.react('👀').catch((err) =>
-        logger.debug({ err }, 'Failed to set reaction'),
-      );
+      ctx
+        .react('👀')
+        .catch((err) => logger.debug({ err }, 'Failed to set reaction'));
 
       // Deliver message — startMessageLoop() will pick it up
       this.opts.onMessage(chatJid, {
@@ -347,6 +348,7 @@ export class TelegramChannel implements Channel {
     // Handle errors gracefully
     this.bot.catch((err) => {
       logger.error({ err: err.message }, 'Telegram bot error');
+      setChannelHealth('telegram', 'degraded', err.message);
     });
 
     // Start polling — returns a Promise that resolves when started
@@ -357,6 +359,7 @@ export class TelegramChannel implements Channel {
             { username: botInfo.username, id: botInfo.id },
             'Telegram bot connected',
           );
+          setChannelHealth('telegram', 'healthy');
           console.log(`\n  Telegram bot: @${botInfo.username}`);
           console.log(
             `  Send /chatid to the bot to get a chat's registration ID\n`,
