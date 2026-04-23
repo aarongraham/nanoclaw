@@ -14,10 +14,7 @@ import {
   POLL_INTERVAL,
   TIMEZONE,
 } from './config.js';
-import {
-  getChannelHealth,
-  onChannelHealthChange,
-} from './channel-health.js';
+import { getChannelHealth, onChannelHealthChange } from './channel-health.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { startDashboard, stopDashboard } from './dashboard/server.js';
 import './channels/index.js';

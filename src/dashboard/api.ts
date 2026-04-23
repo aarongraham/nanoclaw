@@ -11,10 +11,7 @@ import {
   GROUPS_DIR,
   STORE_DIR,
 } from '../config.js';
-import {
-  getAllChannelHealth,
-  getChannelHealth,
-} from '../channel-health.js';
+import { getAllChannelHealth, getChannelHealth } from '../channel-health.js';
 import { CONTAINER_RUNTIME_BIN } from '../container-runtime.js';
 import {
   getAllRegisteredGroups,
