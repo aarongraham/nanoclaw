@@ -62,12 +62,9 @@ RUN git config --global user.name "Argos Dev Agent [nanoclaw/saturn]" && \
     git config --global trailer.agent.key "Agent" && \
     git config --global trailer.agent.value "nanoclaw-dev-agent@saturn"
 
-# Pre-scan GitHub's host key so git-over-SSH doesn't prompt
-RUN mkdir -p /home/node/.ssh && \
-    ssh-keyscan github.com >> /home/node/.ssh/known_hosts 2>/dev/null && \
-    chown -R node:node /home/node/.ssh && \
-    chmod 700 /home/node/.ssh && \
-    chmod 600 /home/node/.ssh/known_hosts
+# Removed the ssh-keyscan pre-seed: ssh-keyscan isn't in the slim base image
+# (causes build to fail with exit 127) and setup-dev-agent.sh uses
+# https://x-access-token:$GITHUB_TOKEN@github.com/... for git, not SSH.
 
 USER node
 
