@@ -9,19 +9,12 @@ export interface ChannelHealth {
   since: string;
 }
 
-export type ChannelHealthListener = (
-  current: ChannelHealth,
-  previousState: HealthState,
-) => void;
+export type ChannelHealthListener = (current: ChannelHealth, previousState: HealthState) => void;
 
 const state = new Map<string, ChannelHealth>();
 const listeners: ChannelHealthListener[] = [];
 
-export function setChannelHealth(
-  channel: string,
-  next: HealthState,
-  reason: string | null = null,
-): void {
+export function setChannelHealth(channel: string, next: HealthState, reason: string | null = null): void {
   const prev = state.get(channel);
   const previousState: HealthState = prev?.state ?? 'unknown';
   if (prev && prev.state === next && prev.reason === reason) return;
