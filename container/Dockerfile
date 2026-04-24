@@ -51,6 +51,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         git \
         tini \
         unzip \
+        poppler-utils \
     && if [ "$INSTALL_CJK_FONTS" = "true" ]; then \
         apt-get install -y --no-install-recommends fonts-noto-cjk; \
        fi \
@@ -62,6 +63,9 @@ ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 # Belt-and-braces: prevent Playwright's postinstall from downloading its own
 # ~300MB Chromium. We've already installed the system one above.
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+# User customization: browser stealth UA + launch args to reduce bot detection
+ENV AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+ENV AGENT_BROWSER_ARGS="--disable-blink-features=AutomationControlled --disable-features=IsolateOrigins,site-per-process"
 
 # ---- Bun runtime -------------------------------------------------------------
 # Install via the official script (handles multi-arch detection), then move
@@ -107,6 +111,10 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 # ---- Entrypoint --------------------------------------------------------------
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+
+# User customization: pdf-reader CLI (bash wrapper around poppler-utils)
+COPY skills/pdf-reader/pdf-reader /usr/local/bin/pdf-reader
+RUN chmod +x /usr/local/bin/pdf-reader
 
 # ---- Workspace + permissions -------------------------------------------------
 RUN mkdir -p /workspace/group /workspace/extra && \

@@ -1,0 +1,75 @@
+# NanoClaw Dev Agent Container
+# Extends the base agent image with Elixir/Erlang via asdf.
+# Versions are baked in at build time from the project's .tool-versions.
+# Build with: ./container/build-dev-agent.sh
+
+ARG BASE_IMAGE=nanoclaw-agent:latest
+FROM ${BASE_IMAGE}
+
+ARG ERLANG_VERSION=27.2
+ARG ELIXIR_VERSION=1.18.2-otp-27
+
+USER root
+
+# Build deps for compiling Erlang/OTP from source
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    autoconf \
+    libncurses5-dev \
+    libssl-dev \
+    libssh-dev \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install asdf into /opt/asdf so it's available to all users
+ENV ASDF_DIR=/opt/asdf
+ENV ASDF_DATA_DIR=/opt/asdf
+RUN git clone https://github.com/asdf-vm/asdf.git ${ASDF_DIR} --branch v0.15.0 --depth 1
+
+ENV PATH="${ASDF_DIR}/bin:${ASDF_DIR}/shims:${PATH}"
+
+# Add erlang and elixir plugins
+RUN asdf plugin add erlang https://github.com/asdf-vm/asdf-erlang.git && \
+    asdf plugin add elixir https://github.com/asdf-vm/asdf-elixir.git
+
+# Build Erlang without GUI / Java / ODBC to keep it lean and fast.
+# KERL_BUILD_BACKEND=tarball downloads a pre-packaged source tarball rather
+# than cloning the full OTP git history — much faster.
+ENV KERL_BUILD_BACKEND=tarball
+ENV KERL_CONFIGURE_OPTIONS="--disable-debug --without-javac --without-wx --without-odbc --disable-hipe"
+
+# Install Erlang (slow — compiles from source, fully cached in Docker layer)
+RUN asdf install erlang ${ERLANG_VERSION} && \
+    asdf global erlang ${ERLANG_VERSION}
+
+# Install Elixir (fast — downloads pre-built release)
+RUN asdf install elixir ${ELIXIR_VERSION} && \
+    asdf global elixir ${ELIXIR_VERSION}
+
+# Install hex and rebar into a global location accessible by the node user.
+# HEX_HOME is intentionally not set — hex archives land in $MIX_HOME/archives/.
+# ELIXIR_ERL_OPTIONS=+fnu suppresses the latin1 locale warning during build.
+ENV MIX_HOME=/opt/mix
+ENV ELIXIR_ERL_OPTIONS="+fnu"
+RUN mix local.hex --force && \
+    mix local.rebar --force && \
+    chmod -R a+rx /opt/mix
+
+# Configure git identity so commits are clearly marked as coming from the dev agent.
+# This shows up in `git log`, GitHub history, and PR views — no agent needs to remember it.
+RUN git config --global user.name "Argos Dev Agent [nanoclaw/saturn]" && \
+    git config --global user.email "nanoclaw-dev-agent@saturn.local" && \
+    git config --global trailer.agent.key "Agent" && \
+    git config --global trailer.agent.value "nanoclaw-dev-agent@saturn"
+
+# Pre-scan GitHub's host key so git-over-SSH doesn't prompt
+RUN mkdir -p /home/node/.ssh && \
+    ssh-keyscan github.com >> /home/node/.ssh/known_hosts 2>/dev/null && \
+    chown -R node:node /home/node/.ssh && \
+    chmod 700 /home/node/.ssh && \
+    chmod 600 /home/node/.ssh/known_hosts
+
+USER node
+
+ENV MIX_HOME=/opt/mix
+ENV ELIXIR_ERL_OPTIONS="+fnu"
