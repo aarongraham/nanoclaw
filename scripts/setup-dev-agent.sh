@@ -52,22 +52,49 @@ git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@${GITHUB_REPO#
 echo "      Remote configured. Token is embedded in .git/config (stays within this server)."
 
 # ── 3. Postgres ───────────────────────────────────────────────────────────────
-# argos_dev lives in the existing onecli-postgres-1 container (already on :5432).
-# The user and database were created once during initial setup.
-echo "[3/6] Verifying argos_dev database exists in onecli-postgres-1..."
-if docker exec onecli-postgres-1 psql -U onecli -lqt 2>/dev/null | cut -d'|' -f1 | grep -qw argos_dev; then
-  echo "      argos_dev exists — OK"
-else
-  echo "      argos_dev not found — creating user and database..."
-  PG_PASSWORD=$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | head -c 24)
-  docker exec onecli-postgres-1 psql -U onecli -c "CREATE USER argos WITH PASSWORD '${PG_PASSWORD}';"
-  docker exec onecli-postgres-1 psql -U onecli -c "CREATE DATABASE argos_dev OWNER argos;"
-  echo ""
-  echo "      Database created. Connection URL:"
-  echo "      ecto://argos:${PG_PASSWORD}@host.docker.internal:5432/argos_dev"
-  echo ""
-  echo "      Add the hostname/username/password to config/dev.exs in the argos project."
+# argos_dev + argos_test live in argos-postgres-1 (postgres:18-alpine, bound to
+# 127.0.0.1:5432). The container is created with POSTGRES_USER=argos +
+# POSTGRES_PASSWORD=argos so user/auth come up automatically; this step only
+# starts the container if it isn't running and ensures argos_test exists.
+PG_CONTAINER="argos-postgres-1"
+PG_VOLUME="argos_pgdata"
+echo "[3/6] Verifying ${PG_CONTAINER} is running..."
+if ! docker ps --format '{{.Names}}' | grep -qx "${PG_CONTAINER}"; then
+  if docker ps -a --format '{{.Names}}' | grep -qx "${PG_CONTAINER}"; then
+    echo "      Found stopped ${PG_CONTAINER} — starting..."
+    docker start "${PG_CONTAINER}" >/dev/null
+  else
+    echo "      Creating ${PG_CONTAINER} (postgres:18-alpine, 127.0.0.1:5432)..."
+    docker volume create "${PG_VOLUME}" >/dev/null
+    docker run -d \
+      --name "${PG_CONTAINER}" \
+      --restart unless-stopped \
+      -e POSTGRES_USER=argos \
+      -e POSTGRES_PASSWORD=argos \
+      -e POSTGRES_DB=argos_dev \
+      -v "${PG_VOLUME}:/var/lib/postgresql/data" \
+      -p 127.0.0.1:5432:5432 \
+      postgres:18-alpine >/dev/null
+  fi
 fi
+
+# Wait until accepting connections (fresh init can take a few seconds).
+for _ in $(seq 1 30); do
+  if docker exec "${PG_CONTAINER}" pg_isready -U argos -d argos_dev >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+# argos_test for `mix test` (config/test.exs uses database = argos_test#{partition}).
+if ! docker exec "${PG_CONTAINER}" psql -U argos -d argos_dev -tAc "SELECT 1 FROM pg_database WHERE datname='argos_test'" 2>/dev/null | grep -q 1; then
+  docker exec "${PG_CONTAINER}" psql -U argos -d argos_dev -c "CREATE DATABASE argos_test OWNER argos;" >/dev/null
+  echo "      Created argos_test"
+fi
+
+echo "      ${PG_CONTAINER} ready. Connection URL:"
+echo "      ecto://argos:argos@host.docker.internal:5432/argos_dev"
+echo "      (PGUSER/PGPASSWORD/PGHOST/PGPORT/PGDATABASE are wired in /opt/argos/.env)"
 
 # ── 4. Mount allowlist ────────────────────────────────────────────────────────
 echo "[4/6] Configuring mount allowlist at ${ALLOWLIST_PATH}..."
