@@ -522,11 +522,9 @@ registerChannelAdapter('whatsapp', {
 
       sock.ev.on('creds.update', saveCreds);
 
-      // Phone number sharing events — update LID mapping
-      sock.ev.on('chats.phoneNumberShare', ({ lid, jid }) => {
-        const lidUser = lid?.split('@')[0].split(':')[0];
-        if (lidUser && jid) setLidPhoneMapping(lidUser, jid);
-      });
+      // Baileys 7 removed the `chats.phoneNumberShare` event. LID-to-phone
+      // mapping is now populated lazily from `msg.key.senderPn` in the
+      // inbound path (see translateJid below).
 
       // Inbound messages
       sock.ev.on('messages.upsert', async ({ messages }) => {
