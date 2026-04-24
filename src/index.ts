@@ -7,8 +7,12 @@
 import path from 'path';
 import type { Server } from 'http';
 
+import { onChannelHealthChange } from './channel-health.js';
 import { CREDENTIAL_PROXY_PORT, DATA_DIR } from './config.js';
+import { readEnvFile } from './env.js';
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
+import { getOwners } from './modules/permissions/db/user-roles.js';
+import { ensureUserDm } from './modules/permissions/user-dm.js';
 import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
 import { ensureContainerRuntimeRunning, cleanupOrphans, PROXY_BIND_HOST } from './container-runtime.js';
@@ -167,6 +171,78 @@ async function main(): Promise<void> {
   // 6. Start host sweep
   startHostSweep();
   log.info('Host sweep started');
+
+  // 6b. Channel health — debounced alerts to the owner's DM when a
+  // channel adapter stays degraded past CHANNEL_ALERT_DEBOUNCE_MS (default
+  // 15min). Recovery triggers a follow-up DM only if a degraded alert was
+  // already sent. See src/channel-health.ts.
+  const CHANNEL_ALERT_DEBOUNCE_MS = Number(process.env.CHANNEL_ALERT_DEBOUNCE_MS) || 15 * 60 * 1000;
+  const pendingDegradedAlerts = new Map<string, NodeJS.Timeout>();
+  const sentDegradedAlerts = new Set<string>();
+
+  const sendAlertToOwner = async (text: string): Promise<void> => {
+    const owners = getOwners();
+    if (owners.length === 0) {
+      log.warn('Channel health alert: no owner configured, cannot DM', { text });
+      return;
+    }
+    const ownerUserId = owners[0].user_id;
+    const dm = await ensureUserDm(ownerUserId);
+    if (!dm) {
+      log.warn('Channel health alert: no DM resolved for owner', { ownerUserId, text });
+      return;
+    }
+    const adapter = getChannelAdapter(dm.channel_type);
+    if (!adapter) {
+      log.warn('Channel health alert: no adapter for owner DM', { channelType: dm.channel_type, text });
+      return;
+    }
+    try {
+      await adapter.deliver(dm.platform_id, null, { kind: 'chat', content: { text } });
+    } catch (err) {
+      log.warn('Channel health alert: failed to DM owner', { err });
+    }
+  };
+
+  onChannelHealthChange((update, previousState) => {
+    const { channel, state, reason } = update;
+    void previousState;
+    if (state === 'degraded') {
+      if (pendingDegradedAlerts.has(channel)) return;
+      const timer = setTimeout(() => {
+        void sendAlertToOwner(`⚠️ ${channel} degraded: ${reason ?? 'unknown'}`);
+        sentDegradedAlerts.add(channel);
+        pendingDegradedAlerts.delete(channel);
+      }, CHANNEL_ALERT_DEBOUNCE_MS);
+      pendingDegradedAlerts.set(channel, timer);
+    } else if (state === 'healthy') {
+      const pending = pendingDegradedAlerts.get(channel);
+      if (pending) {
+        clearTimeout(pending);
+        pendingDegradedAlerts.delete(channel);
+      }
+      if (sentDegradedAlerts.has(channel)) {
+        void sendAlertToOwner(`✅ ${channel} recovered`);
+        sentDegradedAlerts.delete(channel);
+      }
+    }
+  });
+
+  // 7. Dashboard (optional — only starts if DASHBOARD_SECRET is set).
+  // Reads DATA_DIR + channel registry to build a per-60s JSON snapshot
+  // posted into the @nanoco/nanoclaw-dashboard server for UI display.
+  const dashboardEnv = readEnvFile(['DASHBOARD_SECRET', 'DASHBOARD_PORT']);
+  const dashboardSecret = process.env.DASHBOARD_SECRET || dashboardEnv.DASHBOARD_SECRET;
+  const dashboardPort = parseInt(process.env.DASHBOARD_PORT || dashboardEnv.DASHBOARD_PORT || '3100', 10);
+  if (dashboardSecret) {
+    const { startDashboard } = await import('@nanoco/nanoclaw-dashboard');
+    const { startDashboardPusher } = await import('./dashboard-pusher.js');
+    startDashboard({ port: dashboardPort, secret: dashboardSecret });
+    startDashboardPusher({ port: dashboardPort, secret: dashboardSecret, intervalMs: 60000 });
+    log.info('Dashboard started', { port: dashboardPort });
+  } else {
+    log.info('Dashboard disabled (no DASHBOARD_SECRET set)');
+  }
 
   log.info('NanoClaw running');
 }

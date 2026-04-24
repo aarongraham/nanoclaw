@@ -1,3 +1,15 @@
+/**
+ * Voice message transcription via whisper.cpp.
+ *
+ * Two entry points:
+ *   - `transcribeAudioBuffer(buffer)` — when the caller already has the raw
+ *     audio bytes (preferred, avoids re-downloading).
+ *   - `transcribeAudioMessage(msg, sock)` — download + transcribe in one step;
+ *     kept for callers that don't already have the buffer.
+ *
+ * Requires `ffmpeg` + `whisper-cli` binaries on PATH and a ggml model file
+ * at `$WHISPER_MODEL` (default `data/models/ggml-base.bin`).
+ */
 import { execFile } from 'child_process';
 import fs from 'fs';
 import os from 'os';
@@ -5,6 +17,8 @@ import path from 'path';
 import { promisify } from 'util';
 
 import { downloadMediaMessage, WAMessage, WASocket } from '@whiskeysockets/baileys';
+
+import { log } from './log.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,7 +48,7 @@ async function transcribeWithWhisperCpp(audioBuffer: Buffer): Promise<string | n
     const transcript = stdout.trim();
     return transcript || null;
   } catch (err) {
-    console.error('whisper.cpp transcription failed:', err);
+    log.warn('whisper.cpp transcription failed', { err });
     return null;
   } finally {
     for (const f of [tmpOgg, tmpWav]) {
@@ -47,6 +61,14 @@ async function transcribeWithWhisperCpp(audioBuffer: Buffer): Promise<string | n
   }
 }
 
+/** Transcribe a pre-downloaded audio buffer. Returns transcript or null on failure. */
+export async function transcribeAudioBuffer(buffer: Buffer): Promise<string | null> {
+  if (!buffer || buffer.length === 0) return null;
+  const transcript = await transcribeWithWhisperCpp(buffer);
+  return transcript ? transcript.trim() : null;
+}
+
+/** Download + transcribe. Returns transcript, fallback placeholder, or null on hard failure. */
 export async function transcribeAudioMessage(msg: WAMessage, sock: WASocket): Promise<string | null> {
   try {
     const buffer = (await downloadMediaMessage(
@@ -54,28 +76,23 @@ export async function transcribeAudioMessage(msg: WAMessage, sock: WASocket): Pr
       'buffer',
       {},
       {
-        logger: console as any,
+        logger: console as unknown as never,
         reuploadRequest: sock.updateMediaMessage,
       },
     )) as Buffer;
 
     if (!buffer || buffer.length === 0) {
-      console.error('Failed to download audio message');
+      log.warn('Failed to download audio message (empty buffer)');
       return FALLBACK_MESSAGE;
     }
 
-    console.log(`Downloaded audio message: ${buffer.length} bytes`);
-
-    const transcript = await transcribeWithWhisperCpp(buffer);
-
-    if (!transcript) {
-      return FALLBACK_MESSAGE;
-    }
-
-    console.log(`Transcribed voice message: ${transcript.length} chars`);
-    return transcript.trim();
+    log.info('Downloaded audio message for transcription', { bytes: buffer.length });
+    const transcript = await transcribeAudioBuffer(buffer);
+    if (!transcript) return FALLBACK_MESSAGE;
+    log.info('Transcribed voice message', { chars: transcript.length });
+    return transcript;
   } catch (err) {
-    console.error('Transcription error:', err);
+    log.warn('Transcription error', { err });
     return FALLBACK_MESSAGE;
   }
 }

@@ -5,6 +5,7 @@
  */
 import { createTelegramAdapter } from '@chat-adapter/telegram';
 
+import { setChannelHealth } from '../channel-health.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { createMessagingGroup, getMessagingGroupByPlatform, updateMessagingGroup } from '../db/messaging-groups.js';
@@ -221,7 +222,21 @@ registerChannelAdapter('telegram', {
           ...hostConfig,
           onInbound: createPairingInterceptor(botUsernamePromise, hostConfig.onInbound, token),
         };
-        return withRetry(() => bridge.setup(intercepted), 'bridge.setup');
+        try {
+          const result = await withRetry(() => bridge.setup(intercepted), 'bridge.setup');
+          setChannelHealth('telegram', 'healthy', null);
+          return result;
+        } catch (err) {
+          setChannelHealth('telegram', 'degraded', `setup failed: ${(err as Error).message ?? String(err)}`);
+          throw err;
+        }
+      },
+      async teardown() {
+        try {
+          await bridge.teardown?.();
+        } finally {
+          setChannelHealth('telegram', 'unknown', 'shut down');
+        }
       },
     };
     return wrapped;

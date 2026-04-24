@@ -15,6 +15,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, GROUPS_DIR } from '../src/config.js';
+import { getContainerImageBase } from '../src/install-slug.js';
 import { createAgentGroup, getAgentGroupByFolder } from '../src/db/agent-groups.js';
 import { initDb } from '../src/db/connection.js';
 import {
@@ -30,16 +31,23 @@ import type { AgentGroup } from '../src/types.js';
 const FOLDER = 'dev-agent';
 const AGENT_NAME = 'Argos Dev Agent';
 
-// Read the per-install slug for image naming. We accept either an explicit
-// IMAGE_TAG env override or fall back to reading the slug via install-slug.sh
-// (which the build script also uses).
+// Compute the per-install dev-agent image tag. v2 images are named
+// `nanoclaw-agent-v2-<slug>` where <slug> comes from install-slug.sh; for the
+// dev-agent variant we swap the "agent" prefix for "dev-agent". Callers can
+// override via the IMAGE_TAG env var.
 function resolveDevAgentImageTag(): string {
   if (process.env.IMAGE_TAG) return process.env.IMAGE_TAG;
-  // Best-effort: build-dev-agent.sh uses container_image_base() from
-  // setup/lib/install-slug.sh. The script tag is `nanoclaw-dev-agent-v2-<slug>:latest`.
-  // If the host.onecli-postgres-1 side isn't set up yet, fall back to a
-  // sensible generic tag that the user can override.
-  return 'nanoclaw-dev-agent:latest';
+  const base = getContainerImageBase(process.cwd()); // e.g. nanoclaw-agent-v2-<slug>
+  const devBase = base.replace(/^nanoclaw-agent/, 'nanoclaw-dev-agent');
+  return `${devBase}:latest`;
+}
+
+// Normalize a Telegram chat id to a v2 platform_id. v1 used JID syntax
+// (`tg:-<id>`); v2 expects the bare chat id prefixed with the channel name
+// (`telegram:<id>`). Strip any legacy prefix the env var might carry.
+function normalizeTelegramPlatformId(raw: string): string {
+  const bare = raw.replace(/^tg:/, '').replace(/^telegram:/, '');
+  return `telegram:${bare}`;
 }
 
 function generateId(prefix: string): string {
@@ -111,7 +119,7 @@ async function main(): Promise<void> {
   writeDevAgentContainerConfig(FOLDER, resolveDevAgentImageTag());
 
   // 4. Messaging group for the Telegram DM
-  const platformId = `telegram:${telegramChatId}`;
+  const platformId = normalizeTelegramPlatformId(telegramChatId);
   let mg = getMessagingGroupByPlatform('telegram', platformId);
   if (!mg) {
     createMessagingGroup({

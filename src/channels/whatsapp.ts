@@ -32,9 +32,13 @@ import {
 } from '@whiskeysockets/baileys';
 import type { GroupMetadata, WAMessageKey, WAMessage, WASocket } from '@whiskeysockets/baileys';
 
+import sharp from 'sharp';
+
 import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, DATA_DIR } from '../config.js';
+import { setChannelHealth } from '../channel-health.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
+import { isVoiceMessage, transcribeAudioBuffer } from '../transcription.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import { normalizeOptions, type NormalizedOption } from './ask-question.js';
 import type { ChannelAdapter, ChannelSetup, ConversationInfo, InboundMessage, OutboundMessage } from './adapter.js';
@@ -294,14 +298,18 @@ registerChannelAdapter('whatsapp', {
     async function downloadInboundMedia(
       msg: WAMessage,
       normalized: any,
-    ): Promise<Array<{ type: string; name: string; localPath: string }>> {
+    ): Promise<{
+      attachments: Array<{ type: string; name: string; localPath: string }>;
+      voiceTranscript: string | null;
+    }> {
       const mediaTypes: Array<{ key: string; type: string; ext: string }> = [
         { key: 'imageMessage', type: 'image', ext: '.jpg' },
         { key: 'videoMessage', type: 'video', ext: '.mp4' },
         { key: 'audioMessage', type: 'audio', ext: '.ogg' },
         { key: 'documentMessage', type: 'document', ext: '' },
       ];
-      const results: Array<{ type: string; name: string; localPath: string }> = [];
+      const attachments: Array<{ type: string; name: string; localPath: string }> = [];
+      let voiceTranscript: string | null = null;
       for (const { key, type, ext } of mediaTypes) {
         if (!normalized[key]) continue;
         try {
@@ -311,14 +319,45 @@ registerChannelAdapter('whatsapp', {
           const attachDir = path.join(DATA_DIR, 'attachments');
           fs.mkdirSync(attachDir, { recursive: true });
           const filePath = path.join(attachDir, filename);
-          fs.writeFileSync(filePath, buffer);
-          results.push({ type, name: filename, localPath: `attachments/${filename}` });
-          log.info('Media downloaded', { type, filename });
+
+          // Custom image post-processing: resize to max 1024px + re-encode
+          // as JPEG (quality 85) to shrink the payload Claude multimodal sees.
+          // Ported from v1 src/image.ts. Silent fallback to raw buffer on error.
+          let bytesToWrite = buffer;
+          if (type === 'image') {
+            try {
+              bytesToWrite = await sharp(buffer)
+                .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+                .jpeg({ quality: 85 })
+                .toBuffer();
+            } catch (err) {
+              log.warn('Image resize failed, saving raw', { err });
+            }
+          }
+          fs.writeFileSync(filePath, bytesToWrite);
+          attachments.push({ type, name: filename, localPath: `attachments/${filename}` });
+          log.info('Media downloaded', { type, filename, bytes: bytesToWrite.length });
+
+          // Voice transcription: Claude can't consume raw audio, so we run
+          // whisper.cpp on PTT (push-to-talk) voice notes and inject the
+          // transcript back as the message text. Non-PTT audio (music, etc.)
+          // stays as a raw attachment.
+          if (type === 'audio' && isVoiceMessage(msg)) {
+            try {
+              const transcript = await transcribeAudioBuffer(buffer);
+              if (transcript) {
+                voiceTranscript = transcript;
+                log.info('Voice transcribed', { chars: transcript.length });
+              }
+            } catch (err) {
+              log.warn('Voice transcription failed', { err });
+            }
+          }
         } catch (err) {
           log.warn('Failed to download media', { type, err });
         }
       }
-      return results;
+      return { attachments, voiceTranscript };
     }
 
     async function sendRawMessage(jid: string, text: string): Promise<string | undefined> {
@@ -409,6 +448,11 @@ registerChannelAdapter('whatsapp', {
           const shouldReconnect = reason !== DisconnectReason.loggedOut;
 
           log.info('WhatsApp connection closed', { reason, shouldReconnect });
+          setChannelHealth(
+            'whatsapp',
+            shouldReconnect ? 'degraded' : 'unknown',
+            shouldReconnect ? `disconnected (code ${reason ?? 'n/a'})` : 'logged out',
+          );
 
           if (shouldReconnect) {
             log.info('Reconnecting...');
@@ -431,6 +475,7 @@ registerChannelAdapter('whatsapp', {
         } else if (connection === 'open') {
           connected = true;
           log.info('Connected to WhatsApp');
+          setChannelHealth('whatsapp', 'healthy', null);
 
           // Clean up pairing code file after successful connection
           try {
@@ -522,8 +567,13 @@ registerChannelAdapter('whatsapp', {
               content = content.replace(`@${botLidUser}`, `@${ASSISTANT_NAME}`);
             }
 
-            // Download media attachments (images, video, audio, documents)
-            const attachments = await downloadInboundMedia(msg, normalized);
+            // Download media attachments (images, video, audio, documents).
+            // If a voice note is present, the returned transcript replaces
+            // the usually-empty text content so Claude sees the words spoken.
+            const { attachments, voiceTranscript } = await downloadInboundMedia(msg, normalized);
+            if (voiceTranscript && !content) {
+              content = voiceTranscript;
+            }
 
             // Skip empty protocol messages (no text and no attachments)
             if (!content && attachments.length === 0) continue;
