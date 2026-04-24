@@ -5,12 +5,14 @@
  * start delivery polls, start sweep, handle shutdown.
  */
 import path from 'path';
+import type { Server } from 'http';
 
-import { DATA_DIR } from './config.js';
+import { CREDENTIAL_PROXY_PORT, DATA_DIR } from './config.js';
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
 import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
-import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
+import { ensureContainerRuntimeRunning, cleanupOrphans, PROXY_BIND_HOST } from './container-runtime.js';
+import { startCredentialProxy } from './credential-proxy.js';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { routeInbound } from './router.js';
@@ -55,6 +57,8 @@ import './modules/index.js';
 import type { ChannelAdapter, ChannelSetup } from './channels/adapter.js';
 import { initChannelAdapters, teardownChannelAdapters, getChannelAdapter } from './channels/channel-registry.js';
 
+let proxyServer: Server | null = null;
+
 async function main(): Promise<void> {
   log.info('NanoClaw starting');
 
@@ -70,6 +74,11 @@ async function main(): Promise<void> {
   // 2. Container runtime
   ensureContainerRuntimeRunning();
   cleanupOrphans();
+
+  // 2b. Credential proxy — containers route Anthropic API calls here so
+  // we can inject the real API key / OAuth token without ever passing it
+  // into container env. See src/credential-proxy.ts.
+  proxyServer = await startCredentialProxy(CREDENTIAL_PROXY_PORT, PROXY_BIND_HOST);
 
   // 3. Channel adapters
   await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {
@@ -175,6 +184,10 @@ async function shutdown(signal: string): Promise<void> {
   stopDeliveryPolls();
   stopHostSweep();
   await teardownChannelAdapters();
+  if (proxyServer) {
+    proxyServer.close();
+    proxyServer = null;
+  }
   process.exit(0);
 }
 

@@ -7,20 +7,24 @@ import { ChildProcess, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { OneCLI } from '@onecli-sh/sdk';
-
 import {
   CONTAINER_IMAGE,
   CONTAINER_IMAGE_BASE,
   CONTAINER_INSTALL_LABEL,
+  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   GROUPS_DIR,
-  ONECLI_API_KEY,
-  ONECLI_URL,
   TIMEZONE,
 } from './config.js';
 import { readContainerConfig, writeContainerConfig } from './container-config.js';
-import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
+import {
+  CONTAINER_HOST_GATEWAY,
+  CONTAINER_RUNTIME_BIN,
+  hostGatewayArgs,
+  readonlyMountArgs,
+  stopContainer,
+} from './container-runtime.js';
+import { detectAuthMode } from './credential-proxy.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
@@ -44,8 +48,6 @@ import {
   writeSessionRouting,
 } from './session-manager.js';
 import type { AgentGroup, Session } from './types.js';
-
-const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
 
 /** Active containers tracked by session ID. */
 const activeContainers = new Map<string, { process: ChildProcess; containerName: string }>();
@@ -434,21 +436,25 @@ async function buildContainerArgs(
     }
   }
 
-  // OneCLI gateway — injects HTTPS_PROXY + certs so container API calls
-  // are routed through the agent vault for credential injection.
-  try {
-    if (agentIdentifier) {
-      await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
-    }
-    const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
-    if (onecliApplied) {
-      log.info('OneCLI gateway applied', { containerName });
-    } else {
-      log.warn('OneCLI gateway not applied — container will have no credentials', { containerName });
-    }
-  } catch (err) {
-    log.warn('OneCLI gateway error — container will have no credentials', { containerName, err });
+  // Credential proxy — containers never see real API keys / OAuth tokens.
+  // Route the Claude SDK's API calls through our local proxy which injects
+  // the real credentials from .env at request time.
+  //   API key mode: SDK sends x-api-key=placeholder, proxy swaps for real.
+  //   OAuth mode:   SDK exchanges placeholder token for a temp API key via
+  //                 /api/oauth/claude_cli/create_api_key; proxy injects the
+  //                 real OAuth token on that exchange request only.
+  args.push('-e', `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`);
+  const authMode = detectAuthMode();
+  if (authMode === 'api-key') {
+    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  } else {
+    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
+  // Silence unused-param warnings for now; agentIdentifier remains in the
+  // signature for compatibility with pending callers (self-mod, etc.) and
+  // may be reused if we reintroduce per-agent credential scoping later.
+  void agentGroup;
+  void agentIdentifier;
 
   // Host gateway
   args.push(...hostGatewayArgs());
