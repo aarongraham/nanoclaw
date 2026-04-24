@@ -29,6 +29,11 @@ import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
+import {
+  EMOJI_THINKING,
+  clearSessionReactionTarget,
+  reactToCurrentInbound,
+} from './modules/status-tracker/index.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
@@ -150,6 +155,11 @@ async function spawnContainer(session: Session): Promise<void> {
   activeContainers.set(session.id, { process: container, containerName });
   markContainerRunning(session.id);
 
+  // 🧠 "thinking" — the spawn returned; the container is about to poll
+  // the session DB. No-op for group-chat sessions (router didn't record
+  // a reaction target for them).
+  reactToCurrentInbound(session.id, EMOJI_THINKING);
+
   // Log stderr
   container.stderr?.on('data', (data) => {
     for (const line of data.toString().trim().split('\n')) {
@@ -169,6 +179,7 @@ async function spawnContainer(session: Session): Promise<void> {
     activeContainers.delete(session.id);
     markContainerStopped(session.id);
     stopTypingRefresh(session.id);
+    clearSessionReactionTarget(session.id);
     log.info('Container exited', { sessionId: session.id, code, containerName });
   });
 
@@ -176,6 +187,7 @@ async function spawnContainer(session: Session): Promise<void> {
     activeContainers.delete(session.id);
     markContainerStopped(session.id);
     stopTypingRefresh(session.id);
+    clearSessionReactionTarget(session.id);
     log.error('Container spawn error', { sessionId: session.id, err });
   });
 }

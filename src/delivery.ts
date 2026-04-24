@@ -23,6 +23,7 @@ import {
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
+import { reactOnFirstOutbound } from './modules/status-tracker/index.js';
 import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typing/index.js';
 import type { OutboundFile } from './channels/adapter.js';
 import type { Session } from './types.js';
@@ -199,8 +200,13 @@ async function drainSession(session: Session): Promise<void> {
         // back. Skip the pause for internal traffic (system actions,
         // agent-to-agent routing) — the user doesn't see those and
         // shouldn't get a gap in their typing indicator for them.
+        //
+        // Same gate fires the 🔄 "working" reaction on the first
+        // user-facing outbound in this wake cycle (no-op for group-chat
+        // sessions — the router doesn't record a reaction target there).
         if (msg.kind !== 'system' && msg.channel_type !== 'agent') {
           pauseTypingRefreshAfterDelivery(session.id);
+          reactOnFirstOutbound(session.id);
         }
       } catch (err) {
         const attempts = (deliveryAttempts.get(msg.id) ?? 0) + 1;

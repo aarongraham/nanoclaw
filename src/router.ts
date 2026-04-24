@@ -31,7 +31,7 @@ import { startTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from './session-manager.js';
 import { wakeContainer } from './container-runner.js';
-import { EMOJI_RECEIVED, reactToInbound } from './modules/status-tracker/index.js';
+import { EMOJI_RECEIVED, reactToInbound, setSessionReactionTarget } from './modules/status-tracker/index.js';
 import { getSession } from './db/sessions.js';
 import type { AgentGroup, MessagingGroup, MessagingGroupAgent } from './types.js';
 import type { InboundEvent } from './channels/adapter.js';
@@ -452,16 +452,17 @@ async function deliverToAgent(
 
     // 👀 "received" reaction for DMs only — in group chats per-message
     // reactions would be noise. Agent can still call add_reaction explicitly.
+    // Also record the target so container-runner (🧠) and delivery (🔄)
+    // can react to the same inbound message later in the lifecycle.
     if (mg.is_group === 0 && event.message.id) {
-      void reactToInbound(
-        {
-          channelType: event.channelType,
-          platformId: event.platformId,
-          threadId: event.threadId,
-          messageId: event.message.id,
-        },
-        EMOJI_RECEIVED,
-      );
+      const reactionTarget = {
+        channelType: event.channelType,
+        platformId: event.platformId,
+        threadId: event.threadId,
+        messageId: event.message.id,
+      };
+      setSessionReactionTarget(session.id, reactionTarget);
+      void reactToInbound(reactionTarget, EMOJI_RECEIVED);
     }
 
     const freshSession = getSession(session.id);
