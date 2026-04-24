@@ -29,11 +29,7 @@ import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
 import { initGroupFilesystem } from './group-init.js';
-import {
-  EMOJI_THINKING,
-  clearSessionReactionTarget,
-  reactToCurrentInbound,
-} from './modules/status-tracker/index.js';
+import { EMOJI_THINKING, clearSessionReactionTarget, reactToCurrentInbound } from './modules/status-tracker/index.js';
 import { stopTypingRefresh } from './modules/typing/index.js';
 import { log } from './log.js';
 import { validateAdditionalMounts } from './modules/mount-security/index.js';
