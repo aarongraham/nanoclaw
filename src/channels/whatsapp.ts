@@ -36,6 +36,7 @@ import sharp from 'sharp';
 
 import { ASSISTANT_HAS_OWN_NUMBER, ASSISTANT_NAME, DATA_DIR } from '../config.js';
 import { setChannelHealth } from '../channel-health.js';
+import { storeReaction } from '../db/reactions.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { isVoiceMessage, transcribeAudioBuffer } from '../transcription.js';
@@ -526,6 +527,55 @@ registerChannelAdapter('whatsapp', {
       // mapping is now populated lazily from `msg.key.senderPn` in the
       // inbound path (see translateJid below).
 
+      // Inbound reactions — emoji added to a previous message. The event
+      // fires for both our own reactions (👀/🧠/🔄/etc. emitted by the
+      // status-tracker) and user reactions; `reaction.key.fromMe` filters
+      // ours out so we only persist user-originated ones. `reaction.text`
+      // is falsy when the user removed a reaction — delete the row rather
+      // than store an empty emoji.
+      sock.ev.on('messages.reaction', async (updates) => {
+        for (const u of updates) {
+          try {
+            const targetKey = u.key;
+            const r = u.reaction;
+            if (!targetKey?.remoteJid || !targetKey.id) continue;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const reactorKey = (r as any)?.key as
+              | { remoteJid?: string; participant?: string; fromMe?: boolean }
+              | undefined;
+            if (reactorKey?.fromMe) continue;
+
+            const chatJid = await translateJid(targetKey.remoteJid);
+            const rawReactorJid = reactorKey?.participant || reactorKey?.remoteJid || targetKey.remoteJid;
+            const reactorJid = await translateJid(rawReactorJid);
+            const emoji = (r?.text ?? '').toString();
+            const timestamp = r?.senderTimestampMs
+              ? new Date(Number(r.senderTimestampMs)).toISOString()
+              : new Date().toISOString();
+
+            if (!emoji) {
+              // Reaction removed. We don't have the reactor name handy —
+              // still fine, the target + reactor JID uniquely identify
+              // the row to delete.
+              const { deleteReaction } = await import('../db/reactions.js');
+              deleteReaction(targetKey.id, chatJid, reactorJid);
+              continue;
+            }
+
+            storeReaction({
+              message_id: targetKey.id,
+              message_chat_jid: chatJid,
+              reactor_jid: reactorJid,
+              reactor_name: null,
+              emoji,
+              timestamp,
+            });
+          } catch (err) {
+            log.warn('Failed to process WhatsApp reaction', { err });
+          }
+        }
+      });
+
       // Inbound messages
       sock.ev.on('messages.upsert', async ({ messages }) => {
         for (const msg of messages) {
@@ -705,13 +755,18 @@ registerChannelAdapter('whatsapp', {
 
         if (!text && !hasFiles) return;
 
+        // Caption and standalone text both travel through formatWhatsApp so
+        // `**bold**` / `*italic*` / headings / links are rewritten to
+        // WhatsApp-native syntax on every path out of the adapter.
+        const formattedCaption = text ? formatWhatsApp(text) : undefined;
+
         // Send file attachments (first file gets the caption, rest are captionless)
         if (hasFiles) {
           let captionUsed = false;
           for (const file of message.files!) {
             try {
               const ext = path.extname(file.filename).toLowerCase();
-              const caption = !captionUsed ? text : undefined;
+              const caption = !captionUsed ? formattedCaption : undefined;
               const mediaMsg = buildMediaMessage(file.data, file.filename, ext, caption);
               const sent = await sock.sendMessage(platformId, mediaMsg);
               if (sent?.key?.id && sent.message) {
@@ -725,9 +780,8 @@ registerChannelAdapter('whatsapp', {
           if (captionUsed) return; // Text was sent as caption
         }
 
-        if (text) {
-          const formatted = formatWhatsApp(text);
-          const prefixed = ASSISTANT_HAS_OWN_NUMBER ? formatted : `${ASSISTANT_NAME}: ${formatted}`;
+        if (formattedCaption) {
+          const prefixed = ASSISTANT_HAS_OWN_NUMBER ? formattedCaption : `${ASSISTANT_NAME}: ${formattedCaption}`;
           return sendRawMessage(platformId, prefixed);
         }
       },
