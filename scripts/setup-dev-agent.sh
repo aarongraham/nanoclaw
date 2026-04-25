@@ -64,7 +64,10 @@ if ! docker ps --format '{{.Names}}' | grep -qx "${PG_CONTAINER}"; then
     echo "      Found stopped ${PG_CONTAINER} — starting..."
     docker start "${PG_CONTAINER}" >/dev/null
   else
-    echo "      Creating ${PG_CONTAINER} (postgres:18-alpine, 127.0.0.1:5432)..."
+    echo "      Creating ${PG_CONTAINER} (postgres:18-alpine, 0.0.0.0:5432)..."
+    # Bind on 0.0.0.0 so per-session agent containers can reach it via the
+    # docker bridge (host.docker.internal → 172.17.0.1). 127.0.0.1-only
+    # blocks bridge traffic and surfaces as ECONNREFUSED inside the agent.
     docker volume create "${PG_VOLUME}" >/dev/null
     docker run -d \
       --name "${PG_CONTAINER}" \
@@ -73,7 +76,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "${PG_CONTAINER}"; then
       -e POSTGRES_PASSWORD=argos \
       -e POSTGRES_DB=argos_dev \
       -v "${PG_VOLUME}:/var/lib/postgresql/data" \
-      -p 127.0.0.1:5432:5432 \
+      -p 5432:5432 \
       postgres:18-alpine >/dev/null
   fi
 fi
