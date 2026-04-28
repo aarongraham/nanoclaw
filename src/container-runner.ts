@@ -25,6 +25,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';
 import { getDb, hasTable } from './db/connection.js';
@@ -441,6 +442,14 @@ async function buildContainerArgs(
   if (providerContribution.env) {
     for (const [key, value] of Object.entries(providerContribution.env)) {
       args.push('-e', `${key}=${value}`);
+    }
+  }
+
+  // Per-group env passthrough — read requested keys from .env and inject.
+  if (containerConfig.envPassthrough?.length) {
+    const values = readEnvFile(containerConfig.envPassthrough);
+    for (const key of containerConfig.envPassthrough) {
+      if (values[key]) args.push('-e', `${key}=${values[key]}`);
     }
   }
 

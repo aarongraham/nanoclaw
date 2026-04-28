@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 # Reuse the lib/ledger.py implementation from the sibling container skill.
-SKILL_DIR = Path(__file__).resolve().parents[2] / "container" / "skills" / "new-device-intake"
+SKILL_DIR = Path(__file__).resolve().parents[3] / "container" / "skills" / "new-device-intake"
 sys.path.insert(0, str(SKILL_DIR))
 
 from lib import ledger  # noqa: E402

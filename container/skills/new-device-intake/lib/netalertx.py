@@ -29,8 +29,14 @@ def _request(method: str, url: str, token: str, body: Optional[dict] = None) -> 
 
 def get_devices(base_url: str, token: str) -> list:
     result = _request("GET", f"{base_url}/devices", token)
-    if isinstance(result, dict) and "data" in result:
-        return result["data"]
+    if isinstance(result, dict):
+        # NetAlertX REST returns {"devices": [...], "success": true}; older
+        # forks/specs use {"data": [...]}. Handle either, fall back to [] on
+        # a bare success envelope so callers iterate cleanly.
+        for key in ("devices", "data"):
+            if isinstance(result.get(key), list):
+                return result[key]
+        return []
     return result or []
 
 

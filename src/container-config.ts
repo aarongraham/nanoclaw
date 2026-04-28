@@ -47,6 +47,10 @@ export interface ContainerConfig {
   agentGroupId?: string;
   /** Max messages per prompt. Falls back to code default if unset. */
   maxMessagesPerPrompt?: number;
+  /** Host env vars to read from .env and pass through to the container.
+   * Values come from .env via readEnvFile (not process.env) to keep with
+   * the codebase's "secrets stay out of process.env" rule. */
+  envPassthrough?: string[];
 }
 
 function emptyConfig(): ContainerConfig {
@@ -87,6 +91,7 @@ export function readContainerConfig(folder: string): ContainerConfig {
       assistantName: raw.assistantName,
       agentGroupId: raw.agentGroupId,
       maxMessagesPerPrompt: raw.maxMessagesPerPrompt,
+      envPassthrough: raw.envPassthrough,
     };
   } catch (err) {
     console.error(`[container-config] failed to parse ${p}: ${String(err)}`);
