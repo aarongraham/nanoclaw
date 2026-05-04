@@ -86,6 +86,16 @@ export interface RoutingContext {
   channelType: string | null;
   threadId: string | null;
   inReplyTo: string | null;
+  /**
+   * True when the batch is purely recurrence-driven tasks with no chat origin
+   * (every row is `kind='task'` and has no `platform_id`/`channel_type`).
+   * Recurring tasks have no human waiting on a reply, so the single-destination
+   * "auto-dispatch any plain text to the channel" shortcut should not fire —
+   * otherwise every cron tick spams the wired chat with whatever final text
+   * the agent happens to produce. The agent must explicitly use `send_message`
+   * or `<message to="...">` blocks to surface anything to chat.
+   */
+  taskOnly: boolean;
 }
 
 /**
@@ -94,11 +104,15 @@ export interface RoutingContext {
  */
 export function extractRouting(messages: MessageInRow[]): RoutingContext {
   const first = messages[0];
+  const taskOnly =
+    messages.length > 0 &&
+    messages.every((m) => m.kind === 'task' && !m.platform_id && !m.channel_type);
   return {
     platformId: first?.platform_id ?? null,
     channelType: first?.channel_type ?? null,
     threadId: first?.thread_id ?? null,
     inReplyTo: first?.id ?? null,
+    taskOnly,
   };
 }
 

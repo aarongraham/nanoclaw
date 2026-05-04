@@ -407,7 +407,13 @@ function dispatchResultText(text: string, routing: RoutingContext): void {
   // Single-destination shortcut: the agent wrote plain text — send to
   // the session's originating channel (from session_routing) if available,
   // otherwise fall back to the single destination.
-  if (sent === 0 && scratchpad) {
+  //
+  // Recurrence-driven tasks (cron ticks) skip this shortcut — there's no
+  // human waiting on the reply, and auto-dispatching the final turn text
+  // turns every loop iteration into a chat message. To send chat from a
+  // task, the agent must call the `send_message` MCP tool explicitly or
+  // emit a `<message to="...">` block.
+  if (sent === 0 && scratchpad && !routing.taskOnly) {
     if (routing.channelType && routing.platformId) {
       // Reply to the channel/thread the message came from
       writeMessageOut({
@@ -429,7 +435,8 @@ function dispatchResultText(text: string, routing: RoutingContext): void {
   }
 
   if (scratchpad) {
-    log(`[scratchpad] ${scratchpad.slice(0, 500)}${scratchpad.length > 500 ? '…' : ''}`);
+    const tag = routing.taskOnly ? 'task-scratchpad' : 'scratchpad';
+    log(`[${tag}] ${scratchpad.slice(0, 500)}${scratchpad.length > 500 ? '…' : ''}`);
   }
 
   if (sent === 0 && text.trim()) {
