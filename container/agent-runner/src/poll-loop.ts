@@ -248,8 +248,15 @@ async function processQuery(
   // Stream liveness is decided host-side via the heartbeat file + processing
   // claim age (see src/host-sweep.ts); if something is truly stuck, the host
   // will kill the container and messages get reset to pending.
+  //
+  // Re-entrance: pre-task scripts can take seconds (up to 30s timeout), so
+  // ticks must serialize — without `tickInFlight`, a slow script would let
+  // the next tick re-poll, see the same row still pending (mark_processing
+  // is per-row and the script tick hasn't run markCompleted yet), and
+  // double-process. The flag also prevents two scripts running in parallel.
+  let tickInFlight = false;
   const pollHandle = setInterval(() => {
-    if (done) return;
+    if (done || tickInFlight) return;
 
     // Skip system messages (MCP tool responses) and /clear (needs fresh query).
     // Thread routing is the router's concern — if a message landed in this
@@ -258,21 +265,48 @@ async function processQuery(
     // everything. Filtering on thread_id here caused deadlocks when the
     // initial batch and follow-ups had mismatched thread_ids (e.g. a
     // host-generated welcome trigger with null thread vs a Discord DM reply).
+    //
+    // DB reads happen synchronously inside the tick so they can't race a
+    // teardown — only the script subprocess and provider push are async.
     const newMessages = getPendingMessages().filter((m) => {
       if (m.kind === 'system') return false;
       if ((m.kind === 'chat' || m.kind === 'chat-sdk') && isClearCommand(m)) return false;
       return true;
     });
-    if (newMessages.length > 0) {
-      const newIds = newMessages.map((m) => m.id);
-      markProcessing(newIds);
+    if (newMessages.length === 0) return;
 
-      const prompt = formatMessages(newMessages);
-      log(`Pushing ${newMessages.length} follow-up message(s) into active query`);
-      query.push(prompt);
+    const newIds = newMessages.map((m) => m.id);
+    markProcessing(newIds);
 
-      markCompleted(newIds);
-    }
+    tickInFlight = true;
+    void (async () => {
+      try {
+        // Same pre-task-script gate as the cold-start batch path above —
+        // without it, recurring tasks pushed into an already-active query
+        // bypass their `script` field and wake the agent unconditionally.
+        let keep: MessageInRow[] = newMessages;
+        // MODULE-HOOK:scheduling-pre-task:start
+        const { applyPreTaskScripts } = await import('./scheduling/task-script.js');
+        const preTask = await applyPreTaskScripts(newMessages);
+        keep = preTask.keep;
+        if (done) return; // query ended while script ran — abort writes
+        if (preTask.skipped.length > 0) {
+          markCompleted(preTask.skipped);
+          log(`Pre-task script skipped ${preTask.skipped.length} follow-up task(s): ${preTask.skipped.join(', ')}`);
+        }
+        // MODULE-HOOK:scheduling-pre-task:end
+
+        if (keep.length === 0) return;
+
+        const prompt = formatMessages(keep);
+        log(`Pushing ${keep.length} follow-up message(s) into active query`);
+        query.push(prompt);
+
+        markCompleted(keep.map((m) => m.id));
+      } finally {
+        tickInFlight = false;
+      }
+    })();
   }, ACTIVE_POLL_INTERVAL_MS);
 
   try {
